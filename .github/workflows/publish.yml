@@ -1,0 +1,72 @@
+# The public repository uceflh/habitanium-changelog runs this file, copied
+# there as .github/workflows/publish.yml (docs/ops/changelog-site.md). It
+# checks out the private repository's main and runs its
+# scripts/changelog-site/publish.sh, which builds the team changelog site and
+# publishes it to this repository's gh-pages branch; GitHub Pages serves it
+# at changelog.habitanium.com. The work happens in the private repository's
+# script, so this file rarely needs to change. Actions minutes are free on a
+# public repository; the private repository runs nothing.
+#
+# This log is public: the build prints counts only, and the secrets are
+# masked by GitHub.
+name: Publish
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+# One run at a time; a run that starts while another publishes waits.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_REPO: uceflh/habitanium
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check the secrets
+        id: ready
+        env:
+          CHANGELOG_PASSWORD: ${{ secrets.CHANGELOG_PASSWORD }}
+          SOURCE_READ_TOKEN: ${{ secrets.SOURCE_READ_TOKEN }}
+        run: |
+          if [ -z "$CHANGELOG_PASSWORD" ] || [ -z "$SOURCE_READ_TOKEN" ]; then
+            echo "::notice::CHANGELOG_PASSWORD or SOURCE_READ_TOKEN is not set yet: nothing was published."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Full history for the change log; file contents only for main's files.
+      - name: Check out the source
+        if: steps.ready.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: main
+          token: ${{ secrets.SOURCE_READ_TOKEN }}
+          path: source
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        if: steps.ready.outputs.ok == 'true'
+        with:
+          node-version: 22
+
+      - name: Build and publish
+        if: steps.ready.outputs.ok == 'true'
+        env:
+          CHANGELOG_PASSWORD: ${{ secrets.CHANGELOG_PASSWORD }}
+          SOURCE_READ_TOKEN: ${{ secrets.SOURCE_READ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash source/scripts/changelog-site/publish.sh
